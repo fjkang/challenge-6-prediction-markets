@@ -1,6 +1,7 @@
 //SPDX-License-Identifier: MIT
 pragma solidity >=0.8.0 <0.9.0;
 
+import "hardhat/console.sol";
 import { PredictionMarketToken } from "./PredictionMarketToken.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 
@@ -40,13 +41,15 @@ contract PredictionMarket is Ownable {
     /// Checkpoint 2 ///
     address public immutable i_oracle;
     uint256 public immutable i_initialTokenValue;
-    uint8 public immutable i_initialYesProbability;
-    uint8 public immutable i_percentageLocked;
+    uint256 public immutable i_initialYesProbability;
+    uint256 public immutable i_percentageLocked;
 
     string public s_question;
     uint256 public s_ethCollateral;
     uint256 public s_lpTradingRevenue;
     /// Checkpoint 3 ///
+    PredictionMarketToken public immutable i_yesToken;
+    PredictionMarketToken public immutable i_noToken;
 
     /// Checkpoint 5 ///
 
@@ -85,28 +88,45 @@ contract PredictionMarket is Ownable {
         uint8 _percentageToLock
     ) payable Ownable(_liquidityProvider) {
         /// Checkpoint 2 ////
-        // 1.初始化oracle地址
+        // 2.1 初始化oracle地址
         i_oracle = _oracle;
-        // 2.初始化question
+        // 2.2 初始化question
         s_question = _question;
-        // 3.初始化TokenValue
+        // 2.3 初始化TokenValue，部署脚本中值=0.01
         i_initialTokenValue = _initialTokenValue;
-        // 4.初始化s_ethCollateral
+        // 2.4 初始化s_ethCollateral，部署脚本中值=1
         if (msg.value == 0) {
             revert PredictionMarket__MustProvideETHForInitialLiquidity();
         }
         s_ethCollateral = msg.value;
-        // 5.初始化YesProbability，并限定在0~100之间
+        // 2.5 初始化YesProbability，并限定在0~100之间
         if (_initialYesProbability == 0 || _initialYesProbability >= 100) {
             revert PredictionMarket__InvalidProbability();
         }
         i_initialYesProbability = _initialYesProbability;
-        // 6.初始化percentageToLock，并限定在0~100之间
+        // 2.6 初始化percentageToLock，并限定在0~100之间
         if (_percentageToLock == 0 || _percentageToLock >= 100) {
             revert PredictionMarket__InvalidPercentageToLock();
         }
         i_percentageLocked = _percentageToLock;
         /// Checkpoint 3 ////
+        // 3.1 计算用户初始化总token个数= 1 / 0.01 * 1e18 = 100
+        uint256 initialTokenAmount = (msg.value * PRECISION) / _initialTokenValue;
+        // 3.2 初始化Y币
+        i_yesToken = new PredictionMarketToken("Yes", "Y", msg.sender, initialTokenAmount);
+        // 3.3 初始化N币
+        i_noToken = new PredictionMarketToken("No", "N", msg.sender, initialTokenAmount);
+        // 3.4 计算Y币和N币的锁定池,公式(yesToken + noToken) * probability/100 * lock/100
+        uint256 initialYesAmountLocked = (initialTokenAmount * 2 * _initialYesProbability * _percentageToLock) / 10000;
+        uint256 initialNoAmountLocked = (initialTokenAmount * 2 * (100 - _initialYesProbability) * _percentageToLock) / 10000;
+        // 3.5 把锁定的Y币和N币发生给部署的人
+        bool sentY = i_yesToken.transfer(msg.sender, initialYesAmountLocked);
+        bool sentN = i_noToken.transfer(msg.sender, initialNoAmountLocked);
+        // 3.6 确保转移成功
+        if (!sentY || !sentN) {
+            revert PredictionMarket__TokenTransferFailed();
+        }
+
     }
 
     /////////////////
@@ -262,20 +282,20 @@ contract PredictionMarket is Ownable {
         )
     {
         /// Checkpoint 3 ////
-        // oracle = i_oracle;
-        // initialTokenValue = i_initialTokenValue;
-        // percentageLocked = i_percentageLocked;
-        // initialProbability = i_initialYesProbability;
-        // question = s_question;
-        // ethCollateral = s_ethCollateral;
-        // lpTradingRevenue = s_lpTradingRevenue;
-        // predictionMarketOwner = owner();
-        // yesToken = address(i_yesToken);
-        // noToken = address(i_noToken);
-        // outcome1 = i_yesToken.name();
-        // outcome2 = i_noToken.name();
-        // yesTokenReserve = i_yesToken.balanceOf(address(this));
-        // noTokenReserve = i_noToken.balanceOf(address(this));
+        oracle = i_oracle;
+        initialTokenValue = i_initialTokenValue;
+        percentageLocked = i_percentageLocked;
+        initialProbability = i_initialYesProbability;
+        question = s_question;
+        ethCollateral = s_ethCollateral;
+        lpTradingRevenue = s_lpTradingRevenue;
+        predictionMarketOwner = owner();
+        yesToken = address(i_yesToken);
+        noToken = address(i_noToken);
+        outcome1 = i_yesToken.name();
+        outcome2 = i_noToken.name();
+        yesTokenReserve = i_yesToken.balanceOf(address(this));
+        noTokenReserve = i_noToken.balanceOf(address(this));
         /// Checkpoint 5 ////
         // isReported = s_isReported;
         // winningToken = address(s_winningToken);
