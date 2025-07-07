@@ -38,7 +38,14 @@ contract PredictionMarket is Ownable {
     uint256 private constant PRECISION = 1e18;
 
     /// Checkpoint 2 ///
+    address public immutable i_oracle;
+    uint256 public immutable i_initialTokenValue;
+    uint8 public immutable i_initialYesProbability;
+    uint8 public immutable i_percentageLocked;
 
+    string public s_question;
+    uint256 public s_ethCollateral;
+    uint256 public s_lpTradingRevenue;
     /// Checkpoint 3 ///
 
     /// Checkpoint 5 ///
@@ -78,6 +85,27 @@ contract PredictionMarket is Ownable {
         uint8 _percentageToLock
     ) payable Ownable(_liquidityProvider) {
         /// Checkpoint 2 ////
+        // 1.初始化oracle地址
+        i_oracle = _oracle;
+        // 2.初始化question
+        s_question = _question;
+        // 3.初始化TokenValue
+        i_initialTokenValue = _initialTokenValue;
+        // 4.初始化s_ethCollateral
+        if (msg.value == 0) {
+            revert PredictionMarket__MustProvideETHForInitialLiquidity();
+        }
+        s_ethCollateral = msg.value;
+        // 5.初始化YesProbability，并限定在0~100之间
+        if (_initialYesProbability == 0 || _initialYesProbability >= 100) {
+            revert PredictionMarket__InvalidProbability();
+        }
+        i_initialYesProbability = _initialYesProbability;
+        // 6.初始化percentageToLock，并限定在0~100之间
+        if (_percentageToLock == 0 || _percentageToLock >= 100) {
+            revert PredictionMarket__InvalidPercentageToLock();
+        }
+        i_percentageLocked = _percentageToLock;
         /// Checkpoint 3 ////
     }
 
