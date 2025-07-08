@@ -72,16 +72,21 @@ contract PredictionMarket is Ownable {
     /// Modifiers ///
     /////////////////
 
-    modifier predictionNotReported {
-        if (s_isReported){
+    /// Checkpoint 5 ///
+    modifier predictionNotReported() {
+        if (s_isReported) {
             revert PredictionMarket__PredictionAlreadyReported();
         }
         _;
     }
 
-    /// Checkpoint 5 ///
-
     /// Checkpoint 6 ///
+    modifier predictionAlreadyReported() {
+        if (!s_isReported) {
+            revert PredictionMarket__PredictionNotReported();
+        }
+        _;
+    }
 
     /// Checkpoint 8 ///
 
@@ -204,7 +209,7 @@ contract PredictionMarket is Ownable {
     function report(Outcome _winningOutcome) external predictionNotReported {
         //// Checkpoint 5 ////
         // 1.判断执行者是否是oracle
-        if (msg.sender != i_oracle){
+        if (msg.sender != i_oracle) {
             revert PredictionMarket__OnlyOracleCanReport();
         }
         // 2.设置获胜结果
@@ -221,8 +226,33 @@ contract PredictionMarket is Ownable {
      * @dev Only callable by the owner and only if the prediction is resolved
      * @return ethRedeemed The amount of ETH redeemed
      */
-    function resolveMarketAndWithdraw() external onlyOwner returns (uint256 ethRedeemed) {
+    function resolveMarketAndWithdraw() external onlyOwner predictionAlreadyReported returns (uint256 ethRedeemed) {
         /// Checkpoint 6 ////
+        // 1.校验获胜的token数量
+        uint256 winningTokensAmount = s_winningToken.balanceOf(address(this));
+        if (winningTokensAmount > 0) {
+            // 2.计算ethRedeemed = 获胜的token数(1e18) * token单价(1e18) / 1e18
+            // ⚠️1e18的精度处理
+            ethRedeemed = (winningTokensAmount * i_initialTokenValue) / PRECISION;
+            // 2.1 限制ethRedeemed不能大于抵押的eth数
+            ethRedeemed = ethRedeemed > s_ethCollateral ? s_ethCollateral : ethRedeemed;
+            // 2.2 更新owner的eth抵押
+            s_ethCollateral -= ethRedeemed;
+        }
+        // 3.计算owner获取eth的总数 = ethRedeemed + s_lpTradingRevenue
+        uint256 totalEthtoGet = ethRedeemed + s_lpTradingRevenue;
+        // 4.获取前将token销毁
+        s_winningToken.burn(address(this), winningTokensAmount);
+        // 5.获取eth
+        (bool sent, ) = msg.sender.call{ value: totalEthtoGet }("");
+        if (!sent) {
+            revert PredictionMarket__ETHTransferFailed();
+        }
+
+        // 6.发送WinningTokensRedeemed事件
+        emit MarketResolved(msg.sender, totalEthtoGet);
+
+        return ethRedeemed;
     }
 
     /**
