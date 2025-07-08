@@ -290,6 +290,8 @@ contract PredictionMarket is Ownable {
      */
     function getBuyPriceInEth(Outcome _outcome, uint256 _tradingAmount) public view returns (uint256) {
         /// Checkpoint 7 ////
+        // 返回买入价格
+        return _calculatePriceInEth(_outcome, _tradingAmount, false);
     }
 
     /**
@@ -300,6 +302,8 @@ contract PredictionMarket is Ownable {
      */
     function getSellPriceInEth(Outcome _outcome, uint256 _tradingAmount) public view returns (uint256) {
         /// Checkpoint 7 ////
+        // 返回出售价格
+        return _calculatePriceInEth(_outcome, _tradingAmount, true);
     }
 
     /////////////////////////
@@ -318,6 +322,43 @@ contract PredictionMarket is Ownable {
         bool _isSelling
     ) private view returns (uint256) {
         /// Checkpoint 7 ////
+        // 价格公式：price = initialTokenValue * probabilityAvg * tradingAmount
+        // 🌰例子
+        // probabilityBefore = 50%
+        // probabilityAfter = (60 + 10 ) / (10 + 10 + 60 + 0) = 87.5%
+        // probAvg = (probBefore + probAfter) / 2 = 68.75%
+        // price = 0.01 ETH * 68.75% * 60 = 0.4125 ETH
+        // 1.获取目前币的存量
+        (uint256 currentTokenReserves, uint256 otherTokenReserves) = _getCurrentReserves(_outcome);
+        // 2.如果是购买，保证不超卖
+        if (!_isSelling && currentTokenReserves < _tradingAmount) {
+            revert PredictionMarket__InsufficientLiquidity();
+        }
+        // 3.计算交易前相关数据
+        // 3.1 总的token存量
+        uint256 totalSupplyToken = i_yesToken.totalSupply();
+        // 3.2 交易前当前token已售
+        uint256 currentTokenSoldBefore = totalSupplyToken - currentTokenReserves;
+        // 3.3 交易前的另一种token已售
+        uint256 otherTokenSoldBefore = totalSupplyToken - otherTokenReserves;
+        // 3.4 交易前token总已售
+        uint256 totalTokenSoldBefore = currentTokenSoldBefore + otherTokenSoldBefore;
+        // 3.5 计算交易前的可能性
+        uint256 probabilityBefore = _calculateProbability(currentTokenSoldBefore, totalTokenSoldBefore);
+        // 4.计算交易后相关数据
+        // 4.1 计算当前token交易后的已售
+        uint256 currentTokenSoldAfter = _isSelling
+            ? currentTokenSoldBefore - _tradingAmount
+            : currentTokenSoldBefore + _tradingAmount;
+        // 4.2 交易后token总已售
+        uint256 totalTokenSoldAfter = currentTokenSoldAfter + otherTokenSoldBefore;
+        // 4.3 计算交易后的可能性
+        uint256 probabilityAfter = _calculateProbability(currentTokenSoldAfter, totalTokenSoldAfter);
+        // 5.计算平均可能性
+        uint256 probabilityAvg = (probabilityBefore + probabilityAfter) / 2;
+        // 6.返回价格
+        // i_initialTokenValue->1e18    probabilityAvg->1e18   _tradingAmount->1e18
+        return (i_initialTokenValue * probabilityAvg * _tradingAmount) / PRECISION ** 2;
     }
 
     /**
@@ -327,6 +368,10 @@ contract PredictionMarket is Ownable {
      */
     function _getCurrentReserves(Outcome _outcome) private view returns (uint256, uint256) {
         /// Checkpoint 7 ////
+        // 1.确定要查询的币是Y还是N
+        (PredictionMarketToken oneToken, PredictionMarketToken otherToken) = _outcome == Outcome.YES ? (i_yesToken, i_noToken) : (i_noToken, i_yesToken);
+        // 2.返回币的数量
+        return (oneToken.balanceOf(address(this)), otherToken.balanceOf(address(this)));
     }
 
     /**
@@ -337,6 +382,8 @@ contract PredictionMarket is Ownable {
      */
     function _calculateProbability(uint256 tokensSold, uint256 totalSold) private pure returns (uint256) {
         /// Checkpoint 7 ////
+        // 1.直接返回可能性，⚠️* 1e18以防精度丢失
+        return (tokensSold * PRECISION) / totalSold;
     }
 
     /////////////////////////
