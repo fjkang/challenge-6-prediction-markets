@@ -117,8 +117,9 @@ contract PredictionMarket is Ownable {
         // 3.3 初始化N币
         i_noToken = new PredictionMarketToken("No", "N", msg.sender, initialTokenAmount);
         // 3.4 计算Y币和N币的锁定池,公式(yesToken + noToken) * probability/100 * lock/100
-        uint256 initialYesAmountLocked = (initialTokenAmount * 2 * _initialYesProbability * _percentageToLock) / 10000;
-        uint256 initialNoAmountLocked = (initialTokenAmount * 2 * (100 - _initialYesProbability) * _percentageToLock) / 10000;
+        uint256 initialAmountLocked = (initialTokenAmount * 2 * _percentageToLock) / 100;
+        uint256 initialYesAmountLocked = (_initialYesProbability * initialAmountLocked) / 100;
+        uint256 initialNoAmountLocked = ((100 - _initialYesProbability) * initialAmountLocked) / 100;
         // 3.5 把锁定的Y币和N币发生给部署的人
         bool sentY = i_yesToken.transfer(msg.sender, initialYesAmountLocked);
         bool sentN = i_noToken.transfer(msg.sender, initialNoAmountLocked);
@@ -126,7 +127,6 @@ contract PredictionMarket is Ownable {
         if (!sentY || !sentN) {
             revert PredictionMarket__TokenTransferFailed();
         }
-
     }
 
     /////////////////
@@ -139,6 +139,20 @@ contract PredictionMarket is Ownable {
      */
     function addLiquidity() external payable onlyOwner {
         //// Checkpoint 4 ////
+        // 1.校验输入的eth
+        if (msg.value == 0) {
+            revert PredictionMarket__MustSendExactETHAmount();
+        }
+        // 2.计算要mint的token数量
+        uint256 addTokenAmount = (msg.value * PRECISION) / i_initialTokenValue;
+        // 3.给合约铸造Y币和N币
+        i_yesToken.mint(address(this), addTokenAmount);
+        i_noToken.mint(address(this), addTokenAmount);
+        // 4.更新eth的抵押总量
+        s_ethCollateral += msg.value;
+
+        // 5.发送流动性增加事件
+        emit LiquidityAdded(msg.sender, msg.value, addTokenAmount);
     }
 
     /**
@@ -148,6 +162,28 @@ contract PredictionMarket is Ownable {
      */
     function removeLiquidity(uint256 _ethToWithdraw) external onlyOwner {
         //// Checkpoint 4 ////
+        // 1.计算取回eth对应销毁的token数量
+        uint256 burnTokensAmount = (_ethToWithdraw * PRECISION) / i_initialTokenValue;
+        // 2.校验是否有足够的Y币和N币进行销毁
+        if (burnTokensAmount > i_yesToken.balanceOf(address(this))) {
+            revert PredictionMarket__InsufficientTokenReserve(Outcome.YES, burnTokensAmount);
+        }
+        if (burnTokensAmount > i_noToken.balanceOf(address(this))) {
+            revert PredictionMarket__InsufficientTokenReserve(Outcome.NO, burnTokensAmount);
+        }
+        // 3.销毁Y币和N币数量
+        i_yesToken.burn(address(this), burnTokensAmount);
+        i_noToken.burn(address(this), burnTokensAmount);
+        // 4.转账给owner
+        (bool sent, ) = msg.sender.call{ value: _ethToWithdraw }("");
+        if (!sent) {
+            revert PredictionMarket__ETHTransferFailed();
+        }
+        // 5.更新eth抵押总量
+        s_ethCollateral -= _ethToWithdraw;
+
+        // 6.发生流动性减少事件
+        emit LiquidityRemoved(msg.sender, _ethToWithdraw, burnTokensAmount);
     }
 
     /**
