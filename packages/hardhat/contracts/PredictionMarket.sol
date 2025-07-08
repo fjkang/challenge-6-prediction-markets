@@ -52,6 +52,9 @@ contract PredictionMarket is Ownable {
     PredictionMarketToken public immutable i_noToken;
 
     /// Checkpoint 5 ///
+    PredictionMarketToken public s_winningToken;
+    // ⚠️要设置为public
+    bool public s_isReported;
 
     /////////////////////////
     /// Events //////
@@ -68,6 +71,13 @@ contract PredictionMarket is Ownable {
     /////////////////
     /// Modifiers ///
     /////////////////
+
+    modifier predictionNotReported {
+        if (s_isReported){
+            revert PredictionMarket__PredictionAlreadyReported();
+        }
+        _;
+    }
 
     /// Checkpoint 5 ///
 
@@ -137,7 +147,7 @@ contract PredictionMarket is Ownable {
      * @notice Add liquidity to the prediction market and mint tokens
      * @dev Only the owner can add liquidity and only if the prediction is not reported
      */
-    function addLiquidity() external payable onlyOwner {
+    function addLiquidity() external payable onlyOwner predictionNotReported {
         //// Checkpoint 4 ////
         // 1.校验输入的eth
         if (msg.value == 0) {
@@ -160,7 +170,7 @@ contract PredictionMarket is Ownable {
      * @dev Only the owner can remove liquidity and only if the prediction is not reported
      * @param _ethToWithdraw Amount of ETH to withdraw from liquidity pool
      */
-    function removeLiquidity(uint256 _ethToWithdraw) external onlyOwner {
+    function removeLiquidity(uint256 _ethToWithdraw) external onlyOwner predictionNotReported {
         //// Checkpoint 4 ////
         // 1.计算取回eth对应销毁的token数量
         uint256 burnTokensAmount = (_ethToWithdraw * PRECISION) / i_initialTokenValue;
@@ -191,8 +201,19 @@ contract PredictionMarket is Ownable {
      * @dev Only the oracle can report the winning outcome and only if the prediction is not reported
      * @param _winningOutcome The winning outcome (YES or NO)
      */
-    function report(Outcome _winningOutcome) external {
+    function report(Outcome _winningOutcome) external predictionNotReported {
         //// Checkpoint 5 ////
+        // 1.判断执行者是否是oracle
+        if (msg.sender != i_oracle){
+            revert PredictionMarket__OnlyOracleCanReport();
+        }
+        // 2.设置获胜结果
+        s_winningToken = _winningOutcome == Outcome.YES ? i_yesToken : i_noToken;
+        // 3.将s_isReported置为true
+        s_isReported = true;
+
+        // 4.触发report事件
+        emit MarketReported(msg.sender, _winningOutcome, address(s_winningToken));
     }
 
     /**
@@ -333,7 +354,7 @@ contract PredictionMarket is Ownable {
         yesTokenReserve = i_yesToken.balanceOf(address(this));
         noTokenReserve = i_noToken.balanceOf(address(this));
         /// Checkpoint 5 ////
-        // isReported = s_isReported;
-        // winningToken = address(s_winningToken);
+        isReported = s_isReported;
+        winningToken = address(s_winningToken);
     }
 }
