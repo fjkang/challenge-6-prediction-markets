@@ -348,8 +348,28 @@ contract PredictionMarket is Ownable {
      * @dev Only if the prediction is resolved
      * @param _amount The amount of winning tokens to redeem
      */
-    function redeemWinningTokens(uint256 _amount) external {
+    function redeemWinningTokens(
+        uint256 _amount
+    ) external predictionAlreadyReported amountGreaterThanZero(_amount) notOwner {
         /// Checkpoint 9 ////
+        // 1.校验用户是否有wining token
+        uint256 winingToken = s_winningToken.balanceOf(msg.sender);
+        if (winingToken < _amount) {
+            revert PredictionMarket__InsufficientWinningTokens();
+        }
+        // 2.计算token价值，并转账
+        uint256 ethRedeemed = (_amount * i_initialTokenValue) / PRECISION;
+        (bool sent, ) = msg.sender.call{ value: ethRedeemed }("");
+        if (!sent) {
+            revert PredictionMarket__ETHTransferFailed();
+        }
+        // 3.销毁Redeem的token
+        s_winningToken.burn(msg.sender, _amount);
+        // 4.更新抵押池
+        s_ethCollateral -= ethRedeemed;
+
+        // 5.发送WinningTokensRedeemed事件
+        emit WinningTokensRedeemed(msg.sender, _amount, ethRedeemed);
     }
 
     /**
