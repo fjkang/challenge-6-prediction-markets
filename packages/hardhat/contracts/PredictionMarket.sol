@@ -89,6 +89,18 @@ contract PredictionMarket is Ownable {
     }
 
     /// Checkpoint 8 ///
+    modifier notOwner() {
+        if (msg.sender == owner()) {
+            revert PredictionMarket__OwnerCannotCall();
+        }
+        _;
+    }
+    modifier amountGreaterThanZero(uint256 _amount) {
+        if (_amount == 0) {
+            revert PredictionMarket__AmountMustBeGreaterThanZero();
+        }
+        _;
+    }
 
     //////////////////
     ////Constructor///
@@ -260,8 +272,34 @@ contract PredictionMarket is Ownable {
      * @param _outcome The possible outcome (YES or NO) to buy tokens for
      * @param _amountTokenToBuy Amount of tokens to purchase
      */
-    function buyTokensWithETH(Outcome _outcome, uint256 _amountTokenToBuy) external payable {
+    function buyTokensWithETH(
+        Outcome _outcome,
+        uint256 _amountTokenToBuy
+    ) external payable amountGreaterThanZero(_amountTokenToBuy) predictionNotReported notOwner {
         /// Checkpoint 8 ////
+        // 1.计算购买token所需要的eth
+        uint256 ethForBuy = getBuyPriceInEth(_outcome, _amountTokenToBuy);
+        // 2.校验用户发送eth是否符合
+        if (msg.value != ethForBuy) {
+            revert PredictionMarket__MustSendExactETHAmount();
+        }
+        // 3.判断用户购买的币种
+        PredictionMarketToken tokenType = _outcome == Outcome.YES ? i_yesToken : i_noToken;
+        // 4.判断当前币剩余的token是否足够
+        uint256 tokenReserves = tokenType.balanceOf(address(this));
+        if (_amountTokenToBuy > tokenReserves) {
+            revert PredictionMarket__InsufficientTokenReserve(_outcome, _amountTokenToBuy);
+        }
+        // 5.流动性池增加
+        s_lpTradingRevenue += ethForBuy;
+        // 6.token转账
+        bool sent = tokenType.transfer(msg.sender, _amountTokenToBuy);
+        if (!sent) {
+            revert PredictionMarket__TokenTransferFailed();
+        }
+
+        // 7.发送TokensPurchased事件
+        emit TokensPurchased(msg.sender, _outcome, _amountTokenToBuy, ethForBuy);
     }
 
     /**
@@ -269,8 +307,40 @@ contract PredictionMarket is Ownable {
      * @param _outcome The possible outcome (YES or NO) to sell tokens for
      * @param _tradingAmount The amount of tokens to sell
      */
-    function sellTokensForEth(Outcome _outcome, uint256 _tradingAmount) external {
+    function sellTokensForEth(
+        Outcome _outcome,
+        uint256 _tradingAmount
+    ) external amountGreaterThanZero(_tradingAmount) predictionNotReported notOwner {
         /// Checkpoint 8 ////
+        // 1.获取交易的币种
+        PredictionMarketToken tokenType = _outcome == Outcome.YES ? i_yesToken : i_noToken;
+        // 2.判断用户是否有足够token出售
+        uint256 userBalance = tokenType.balanceOf(msg.sender);
+        if (_tradingAmount > userBalance) {
+            revert PredictionMarket__InsufficientBalance(_tradingAmount, userBalance);
+        }
+        // 3.判断是否有足够的token授权交易
+        uint256 allowance = tokenType.allowance(msg.sender, address(this));
+        if (_tradingAmount > allowance) {
+            revert PredictionMarket__InsufficientAllowance(_tradingAmount, allowance);
+        }
+        // 4.计算token对应的价格
+        uint256 ethForSell = getSellPriceInEth(_outcome, _tradingAmount);
+        // 5.流动性池扣除
+        s_lpTradingRevenue -= ethForSell;
+        // 6.token转账到合约
+        bool sentToken = tokenType.transferFrom(msg.sender, address(this), _tradingAmount);
+        if (!sentToken) {
+            revert PredictionMarket__TokenTransferFailed();
+        }
+        // 7.eth转账给用户
+        (bool sentEth, ) = msg.sender.call{ value: ethForSell }("");
+        if (!sentEth) {
+            revert PredictionMarket__ETHTransferFailed();
+        }
+
+        // 8.发送TokensSold事件
+        emit TokensSold(msg.sender, _outcome, _tradingAmount, ethForSell);
     }
 
     /**
@@ -369,7 +439,9 @@ contract PredictionMarket is Ownable {
     function _getCurrentReserves(Outcome _outcome) private view returns (uint256, uint256) {
         /// Checkpoint 7 ////
         // 1.确定要查询的币是Y还是N
-        (PredictionMarketToken oneToken, PredictionMarketToken otherToken) = _outcome == Outcome.YES ? (i_yesToken, i_noToken) : (i_noToken, i_yesToken);
+        (PredictionMarketToken oneToken, PredictionMarketToken otherToken) = _outcome == Outcome.YES
+            ? (i_yesToken, i_noToken)
+            : (i_noToken, i_yesToken);
         // 2.返回币的数量
         return (oneToken.balanceOf(address(this)), otherToken.balanceOf(address(this)));
     }
